@@ -1,0 +1,20 @@
+{
+  "name": "agent-harness-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "从零搭建 AI Agent Harness 系列博客的静态站点（VitePress）",
+  "scripts": {
+    "postinstall": "node ./scripts/link-node_modules.mjs",
+    "dev": "vitepress dev .",
+    "build": "vitepress build .",
+    "preview": "vitepress preview .",
+    "check:refs": "node ../scripts/check-refs.mjs",
+    "check:links": "node ../scripts/check-links.mjs"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-mermaid": "^2.0.17",
+    "mermaid": "^11.0.0"
+  }
+}
