@@ -1,12 +1,16 @@
 # 素材仓库是外部克隆，只作参照，不随本仓库分发
 material/
 
+# 依赖与构建产物
 node_modules/
 dist/
-.vitepress/cache/
-.vitepress/dist/
+**/.vitepress/cache/
+**/.vitepress/dist/
+
+# 日志
 *.log
+
+# 项目本地经验/进度文档（按约定留本地，不入库；AGENTS.md 是权威指南，必须可跟踪）
 .agents/
 DECISIONS.md
 PROGRESS.md
-AGENTS.md
