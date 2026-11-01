@@ -1,0 +1,11 @@
+# 素材仓库是外部克隆，只作参照，不随本仓库分发
+material/
+
+node_modules/
+dist/
+.vitepress/cache/
+.vitepress/dist/
+*.log
+.agents/
+DECISIONS.md
+PROGRESS.md
