@@ -33,6 +33,7 @@ export default withMermaid(defineConfig({
     nav: [
       { text: '导论', link: '/00-agent-harness/' },
       { text: '第 1 章 · Loop', link: '/01-agent-loop/' },
+      { text: '第 2 章 · 工具层', link: '/02-tool-layer/' },
       { text: '第 3 章 · 可靠性', link: '/03-reliable-model/' },
       { text: '第 6 章 · 安全', link: '/06-security/' }
     ],
@@ -50,6 +51,7 @@ export default withMermaid(defineConfig({
         collapsed: false,
         items: [
           { text: '第 1 章 最小可用 Agent Loop', link: '/01-agent-loop/' },
+          { text: '第 2 章 工具层设计', link: '/02-tool-layer/' },
           { text: '第 3 章 模型层可靠性', link: '/03-reliable-model/' },
           { text: '第 6 章 安全模型', link: '/06-security/' }
         ]
