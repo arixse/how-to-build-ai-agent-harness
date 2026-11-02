@@ -13,11 +13,18 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..')
 // 联接指向 site/node_modules（见 package.json 的 postinstall 与 scripts/link-node_modules.mjs）。
 // 这里把仓库根加入 dev server 的 fs.allow，避免「文件在根外」被拦截。
 // 引入 mermaid 插件：文章里的 ```mermaid 流程图才能在站点里正常渲染
+// base：GitHub Pages 项目页部署在仓库子路径下
+// （https://arixse.github.io/how-to-build-ai-agent-harness/），
+// 必须以 /how-to-build-ai-agent-harness/ 为 base，否则 JS/CSS 全部 404。
+// 本地与自定义部署默认 '/'，CI 里通过环境变量 VITEPRESS_BASE 注入（见 .github/workflows/deploy-pages.yml）。
+const BASE = process.env.VITEPRESS_BASE || '/'
+
 // （否则会退化成原始代码块，和之前预览器不显示是同一个坑）。
 export default withMermaid(defineConfig({
   title: '从零搭建 AI Agent Harness',
   description: '一个手把手教你从 0 到 1 造 Agent 框架的系列技术博客',
   srcDir: '../articles',
+  base: BASE,
   cleanUrls: true,
   ignoreDeadLinks: false, // 由 scripts/check-links.mjs 统一把关死链，构建时不静默放过
 
@@ -33,8 +40,14 @@ export default withMermaid(defineConfig({
     nav: [
       { text: '导论', link: '/00-agent-harness/' },
       { text: '第 1 章 · Loop', link: '/01-agent-loop/' },
+      { text: '第 2 章 · 工具层', link: '/02-tool-layer/' },
       { text: '第 3 章 · 可靠性', link: '/03-reliable-model/' },
-      { text: '第 6 章 · 安全', link: '/06-security/' }
+      { text: '第 4 章 · 上下文', link: '/04-context-session/' },
+      { text: '第 5 章 · 供应商', link: '/05-provider/' },
+      { text: '第 6 章 · 安全', link: '/06-security/' },
+      { text: '第 7 章 · 子 Agent', link: '/07-advanced-subagent/' },
+      { text: '第 8 章 · 评测', link: '/08-evaluation/' },
+      { text: '第 9 章 · 交付', link: '/09-delivery-forms/' }
     ],
 
     sidebar: [
@@ -50,8 +63,14 @@ export default withMermaid(defineConfig({
         collapsed: false,
         items: [
           { text: '第 1 章 最小可用 Agent Loop', link: '/01-agent-loop/' },
+          { text: '第 2 章 工具层设计', link: '/02-tool-layer/' },
           { text: '第 3 章 模型层可靠性', link: '/03-reliable-model/' },
-          { text: '第 6 章 安全模型', link: '/06-security/' }
+          { text: '第 4 章 上下文与会话', link: '/04-context-session/' },
+          { text: '第 5 章 供应商抽象', link: '/05-provider/' },
+          { text: '第 6 章 安全模型', link: '/06-security/' },
+          { text: '第 7 章 子 Agent 与 Skills', link: '/07-advanced-subagent/' },
+          { text: '第 8 章 评测：给 Agent 上门禁', link: '/08-evaluation/' },
+          { text: '第 9 章 多形态交付', link: '/09-delivery-forms/' }
         ]
       }
     ],

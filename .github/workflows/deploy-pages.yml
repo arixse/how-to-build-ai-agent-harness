@@ -1,0 +1,77 @@
+# 构建并部署 VitePress 站点到 GitHub Pages
+#
+# 前提（一次性，手动在仓库设置里完成）：
+#   Settings → Pages → Build and deployment → Source 选 "GitHub Actions"
+#
+# 触发：push 到 main（且改动涉及 site/ 或 articles/ 或 workflow 自身），
+# 或在 Actions 页面手动触发（workflow_dispatch）。
+name: Deploy site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'articles/**'
+      - 'site/**'
+      - 'scripts/check-*.mjs'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+# Pages 部署所需权限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只允许一个部署；排队时取消旧的（省额度）
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      # site/package.json 的 postinstall 会在仓库根建立 node_modules 联接
+      # （内容源 articles/ 在站点工程之外，Vite 解析 vue 需要），Linux 下走 fs.symlinkSync
+      - name: Install dependencies
+        working-directory: site
+        run: npm ci
+
+      # 项目页部署在 /how-to-build-ai-agent-harness/ 子路径，注入 base；
+      # 若仓库改名或迁到自定义域名，改这里即可
+      - name: Build VitePress site
+        working-directory: site
+        run: npm run build
+        env:
+          VITEPRESS_BASE: /how-to-build-ai-agent-harness/
+
+      # 构建产物在 site/.vitepress/dist
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/.vitepress/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

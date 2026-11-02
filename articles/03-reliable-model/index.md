@@ -95,12 +95,213 @@ OpenAI / Anthropic 的 SDK 默认会重试 2 次。如果你在应用层又写�
 4. **`status`/`code` 是 `undefined`。** SDK 把 `fetch` 失败包了一层，错误上这些字段都没了，原始 errno 只在 `cause` 链上，判定可重试必须沿链下钻。
 5. **把 `length` 误当「取消」。** 输出上限截断被映射成取消，用户得到错误的「已取消」提示，而不是「调大 maxTokens」。
 
-## 5. 配套 demo（待内容定稿后补充）
+## 5. 实现 + demo：给模型层装上可靠性壳
 
-本章的 demo 将演示三件事：静默看门狗触发、指数退避与 Retry-After 取大、已外发正文后不重试。按你的要求，先不写 demo，等正文风格敲定后再补，并与上述数字（120s / 3 次 / 1s·2s / ±20%）对齐。
+落在累积式 `harness/` 项目里，本章新增两份文件：`model-reliable.js`（把**任意**有 `complete()` 的模型包上可靠性壳——第 1 章的 `loop.js` 一行不用改）和 `flaky-model.js`（一个专出事故的假模型，demo 用它**确定性**复现三类故障，不依赖真实 API）。真实常量与源码一致：看门狗 120s、重试最多 3 次、退避基准 1s、抖动 ±20%；demo 里把时长缩小成 300ms/80ms，方便肉眼看着触发。
+
+### 5.1 `model-reliable.js` —— 可靠性壳
+
+```js
+// harness/model-reliable.js
+// 真实常量来自源码 config.ts / retry.ts：
+//   REQUEST_TIMEOUT_MS = 120_000 / STREAM_IDLE_TIMEOUT_MS = 120_000（两道独立计时）
+//   MAX_REQUEST_ATTEMPTS = 3（含首次）/ RETRY_BASE_DELAY_MS = 1_000 / RETRY_JITTER_RATIO = 0.2
+export const STREAM_IDLE_TIMEOUT_MS = 120_000;
+export const MAX_REQUEST_ATTEMPTS = 3;
+export const RETRY_BASE_DELAY_MS = 1_000;
+export const RETRY_JITTER_RATIO = 0.2;
+
+const sleep = (ms, signal) =>
+  new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(t); reject(new Error("等待重试时被用户取消")); }, { once: true });
+  });
+
+// 单次尝试：包一道「静默看门狗」。它与 SDK 的连接超时是两道独立计时——
+// SDK 只管到「拿到响应头」，这里管的是「正文阶段两段数据之间隔了多久」。
+function completeOnce(inner, args, idleTimeoutMs) {
+  return new Promise((resolve, reject) => {
+    const attemptAc = new AbortController(); // 每次尝试一个独立信号，看门狗触发时掐断上游
+    const onOuterAbort = () => attemptAc.abort(args.signal?.reason);
+    args.signal?.addEventListener("abort", onOuterAbort, { once: true });
+
+    let timer;
+    const fireIdle = () => {
+      const err = new Error("正文静默超时：两段数据之间隔了太久，判定上游挂死");
+      err.kind = "stream_idle_timeout";
+      attemptAc.abort(); // 关键：把卡死的上游真的掐断，不能只 reject 自己
+      reject(err);
+    };
+    const bump = () => { clearTimeout(timer); timer = setTimeout(fireIdle, idleTimeoutMs); };
+    bump(); // 计时从请求发出就开始——正文迟迟不来也算静默
+
+    inner.complete({
+      ...args,
+      signal: attemptAc.signal,
+      onDelta: (t) => { bump(); args.onDelta?.(t); }, // 有数据 → 重置计时
+    }).then(
+      (v) => { clearTimeout(timer); args.signal?.removeEventListener("abort", onOuterAbort); resolve(v); },
+      (e) => { clearTimeout(timer); args.signal?.removeEventListener("abort", onOuterAbort); reject(e); },
+    );
+  });
+}
+
+function isRetryable(e) {
+  if (e?.kind === "stream_idle_timeout") return true;                 // 看门狗：上游装死
+  if (e?.kind === "http") return e.status === 429 || e.status >= 500; // 限流 / 服务端错
+  if (e?.kind === "network") return true;                             // 网络抖动 / 读一半被掐
+  return false;                                                       // 其余（编程错误等）不重试
+}
+
+// 退避：1s → 2s 指数增长；与服务端 Retry-After 取较大者；再叠加 ±20% 抖动
+export function backoffDelayMs(attempt, baseDelayMs, jitterRatio, retryAfterMs) {
+  const expo = baseDelayMs * 2 ** (attempt - 1);
+  const wait = Math.max(expo, retryAfterMs ?? 0);
+  const factor = 1 - jitterRatio + Math.random() * jitterRatio * 2; // 0.8 ~ 1.2
+  return Math.round(wait * factor);
+}
+
+/**
+ * 把任意「有 complete() 的模型」包上可靠性壳：
+ * - 看门狗：正文静默超时 → 掐断上游 → 记为可重试
+ * - 重试：限流/5xx/网络错最多 3 次，指数退避 + Retry-After 取大 + 抖动
+ * - 铁律：只要有一个字已经吐给用户（onDelta 调过），这次失败绝不重试
+ */
+export function withReliability(inner, opts = {}) {
+  const idleTimeoutMs = opts.idleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS;
+  const maxAttempts = opts.maxAttempts ?? MAX_REQUEST_ATTEMPTS;
+  const baseDelayMs = opts.baseDelayMs ?? RETRY_BASE_DELAY_MS;
+  const jitterRatio = opts.jitterRatio ?? RETRY_JITTER_RATIO;
+  const log = opts.log ?? (() => {});
+
+  return {
+    async complete(args = {}) {
+      const { signal } = args;
+      let emitted = false; // 「已外发追踪器」：吐过一个字就绝不重试
+      const onDelta = (t) => { emitted = true; args.onDelta?.(t); };
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          return await completeOnce(inner, { ...args, onDelta }, idleTimeoutMs);
+        } catch (e) {
+          if (signal?.aborted) throw e; // 用户取消 ≠ 可重试故障，直接交出去
+          if (emitted) {
+            e.emitted = true; // 正文已部分上屏：重试会重复显示、重复计费，只能认栽
+            throw e;
+          }
+          if (!isRetryable(e) || attempt === maxAttempts) throw e;
+          const delay = backoffDelayMs(attempt, baseDelayMs, jitterRatio, e.retryAfterMs);
+          log(`  [retry] 第 ${attempt} 次失败（${e.kind ?? e.message}），约 ${delay}ms 后重试`);
+          await sleep(delay, signal);
+        }
+      }
+    },
+  };
+}
+```
+
+### 5.2 `flaky-model.js` —— 专出事故的假模型
+
+真实项目里被包的 `inner` 就是调真实 API 的流式模型；demo 用下面这个假模型确定性复现三类故障：
+
+```js
+// harness/flaky-model.js
+import { textBlock } from "./messages.js";
+
+const hangUntilAborted = (signal) =>
+  new Promise((_, reject) => {
+    signal?.addEventListener("abort", () => reject(Object.assign(new Error("被看门狗掐断"), { kind: "stream_idle_timeout" })), { once: true });
+    // 不 resolve、不 reject：模拟「连接还在、正文永远不来」
+  });
+
+export function createFlakyModel(scenario) {
+  let calls = 0;
+  return {
+    async complete({ signal, onDelta } = {}) {
+      if (signal?.aborted) return { role: "assistant", content: [], stopReason: "aborted" };
+      calls++;
+      if (scenario === "stall" && calls === 1) {
+        await hangUntilAborted(signal);       // 戏1：一个字不吐然后装死 → 看门狗掐断 → 重试成功
+      }
+      if (scenario === "rate-limit" && calls <= 2) {
+        const err = new Error("HTTP 429 Too Many Requests");
+        err.kind = "http"; err.status = 429; err.retryAfterMs = 400;
+        throw err;                            // 戏2：前两次都限流（Retry-After=400ms），第三次放行
+      }
+      if (scenario === "mid-stream-drop") {
+        onDelta?.("这半句已经上屏了，");
+        const err = new Error("正文读到一半连接被掐断");
+        err.kind = "network";
+        throw err;                            // 戏3：先吐半句再断 → 已外发，绝不重试
+      }
+      return { role: "assistant", content: [textBlock("一切正常，任务完成。")], stopReason: "stop" };
+    },
+  };
+}
+```
+
+### 5.3 跑起来，看三出戏
+
+```js
+// harness/run-reliable.js
+import { withReliability } from "./model-reliable.js";
+import { createFlakyModel } from "./flaky-model.js";
+
+// demo 把 120s/1s 缩小成 300ms/80ms 方便观察；真实常量见 model-reliable.js 顶部注释
+const opts = { idleTimeoutMs: 300, baseDelayMs: 80, jitterRatio: 0.2, log: console.log };
+
+// 戏1：静默装死 → 看门狗掐断 → 自动重试成功
+{
+  const model = withReliability(createFlakyModel("stall"), opts);
+  const r = await model.complete({ onDelta: (t) => process.stdout.write(t) });
+  console.log("\n[戏1] 看门狗 + 重试救回来了 →", r.content[0].text, "\n");
+}
+
+// 戏2：连续两次 429（Retry-After=400ms）→ 退避取大 + 抖动 → 第三次成功
+{
+  const model = withReliability(createFlakyModel("rate-limit"), opts);
+  const r = await model.complete({});
+  console.log("[戏2] 退避重试救回来了 →", r.content[0].text, "\n");
+}
+
+// 戏3：吐了半句才断 → 已外发 → 绝不重试，把错误交出去
+{
+  const model = withReliability(createFlakyModel("mid-stream-drop"), opts);
+  try {
+    await model.complete({ onDelta: (t) => process.stdout.write(t) });
+  } catch (e) {
+    console.log("\n[戏3] 已上屏 → 拒绝重试（否则重复显示、重复计费）→", e.message);
+  }
+}
+```
+
+运行：
+
+```bash
+cd demos/harness && node run-reliable.js
+```
+
+预期输出（重试等待时间带 ±20% 抖动，每次运行略有不同）：
+
+```
+[戏1] 上游一个字不吐然后装死（300ms 静默上限）…
+  [retry] 第 1 次失败（stream_idle_timeout），约 83ms 后重试
+[戏1] 看门狗 + 重试救回来了 → 一切正常，任务完成。
+
+[戏2] 上游连续限流（429，要求 400ms 后再来）…
+  [retry] 第 1 次失败（http），约 458ms 后重试
+  [retry] 第 2 次失败（http），约 368ms 后重试
+[戏2] 退避重试救回来了 → 一切正常，任务完成。
+
+[戏3] 上游吐了半句才断线…
+这半句已经上屏了，
+[戏3] 已上屏 → 拒绝重试（否则重复显示、重复计费）→ 正文读到一半连接被掐断
+```
+
+三出戏正好把本章的三条规矩各演一遍：戏 1 是「两道计时」里的正文看门狗（SDK 的连接超时管不到它），戏 2 是「退避与 Retry-After 取大」（退避算出 80/160ms，但服务端要求 400ms，听服务端的），戏 3 是「已外发正文绝不重试」——注意戏 3 的错误本身是可重试的 `network`，但被「已上屏」这条铁律拦下，两套规则叠加才是完整行为。把 `flaky-model` 换成真实流式实现，这层壳原封不动。
 
 ## 6. 小结与下一章
 
 模型层的可靠，不是「加个 try/catch」就完事，而是把**连接/正文两道时限、可识别的静默超时、自己可控的退避、以及「已上屏的字绝不重来」**这几条铁律焊进壳里，每条都靠源码注释里的真实事故兜底。
 
-但还有一类故障模型层管不了：模型说「`rm -rf build`」并且真的要去执行。下一章（安全模型）讲**审批三档、风险分级、路径与凭据保护**——以及那条贯穿整个安全设计的核心原则：**「路径守卫只是尽力而为，审批才是真正的防线」。**
+可靠性壳装好后，还有一层一直在后台默默张着嘴的问题：聊得越久，历史越长，模型的上下文窗口迟早被撑爆——而且进程一退，这局对话就没了。下一章（上下文与会话）讲 **JSONL 会话落盘、读时容错、token 估算、自动压缩**——以及那条最反直觉的铁律：**压缩失败了宁可不压，也绝不把真实历史换成一句统计摘要**（历史一旦落盘，就没有后悔药）。
