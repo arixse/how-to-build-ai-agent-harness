@@ -20,6 +20,12 @@ export async function runAgentLoop({
   maxTurns = MAX_TURNS,
   beforeToolCall,
   signal,
+  // 第9章升级：内核不打印、不着色——onDelta 由调用方注入（终端画字，服务端发事件）；
+  // 默认仍是写终端，保证第 1 章的用法不变
+  onDelta = (text) => process.stdout.write(text),
+  // 每轮结束钩子：落盘与压缩由调用方决定（内核不知道「会话文件」长什么样）；
+  // 返回新上下文时循环用它替换内部上下文——压缩后必须让模型立刻看到摘要
+  onTurnEnd,
 }) {
   const context = [...messages];
   const newMessages = [];
@@ -32,7 +38,7 @@ export async function runAgentLoop({
       messages: context,
       tools: [], // 第3章换成真实模型时，这里传工具 schema
       signal: ac,
-      onDelta: (text) => process.stdout.write(text),
+      onDelta,
     });
     context.push(assistant);
     newMessages.push(assistant);
@@ -95,6 +101,15 @@ export async function runAgentLoop({
     });
 
     if (ac.aborted) break;
+
+    // 5) 回合钩子（第9章）：落盘 / 压缩在这里发生；返回新上下文则立即替换
+    if (onTurnEnd) {
+      const next = await onTurnEnd([...context]);
+      if (next) {
+        context.length = 0;
+        context.push(...next);
+      }
+    }
   }
 
   return { newMessages };
