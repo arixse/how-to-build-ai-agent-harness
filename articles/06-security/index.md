@@ -79,9 +79,149 @@
 4. **白名单与只读集合混淆。** `verify_command` 既不在只读集合（要确认），又不参与风险评级。两处都按「维度独立」处理，曾因混用出现过「能并发却要确认」。
 5. **类型别名救了第四档。** 客户端档位是内核类型的别名并由测试钉死逐项相等；若各写一份联合类型，「内核加第四档、客户端不认识」会静默少一档。
 
-## 5. 配套 demo（待内容定稿后补充）
+## 5. 实现 + demo：跟着装上审批三档与风险分级
 
-本章的 demo 将演示审批三档裁决与 bash 风险分级（同一组调用在不同档位下的 `allow` / `ask` / `block`，以及一组命令的 `none` / `elevated` / `high`）。按你的要求，先不写 demo，等正文风格敲定后再补，并与上述档位、模式、风险分级对齐。
+落在累积式 `harness/` 项目里，本章新增一份文件：`security.js`——审批裁决和风险分级**两个纯函数**，一行界面代码都没有。第 1 章的 `loop.js` 只认 `beforeToolCall` 的三种回答，把纯函数挂上去，护栏就生效了。
+
+### 5.1 `security.js` —— 两个纯函数
+
+```js
+// harness/security.js
+// 对应源码 packages/core/src/policy.ts（审批裁决）与 risk.ts（风险分级）。
+// 关键设计：两个都是**纯函数**——终端 / 网页 / 无人值守共用同一份裁决，
+// 否则「同一句 rm -rf 在终端被拦、在网页却放过」。
+
+// 只读工具集合：工具本身没有副作用，与档位无关，任何档都放行
+export const DEFAULT_READ_ONLY_TOOLS = new Set(["read_file", "grep", "glob"]);
+
+/**
+ * 审批裁决：输入「档位 + 工具名」，输出 allow / ask / block。
+ * 顺序刻意固定：先判只读工具 → 再判档位。
+ */
+export function evaluateApprovalPolicy(mode, toolName, readOnlyTools = DEFAULT_READ_ONLY_TOOLS) {
+  // 1) 只读工具：任何档都放行（它是「工具无副作用」，不是「这个档信任你」）
+  if (readOnlyTools.has(toolName)) {
+    return { kind: "allow", reason: "只读工具，免确认" };
+  }
+  // 2) 全权档：全放行，不做「高危仍问一次」的例外（3.3：半自动比全量检查更危险）
+  if (mode === "full-access") {
+    return { kind: "allow", reason: "全权模式，不再逐一确认" };
+  }
+  // 3) 只读档：直接拒绝、不是询问（3.2：询问会诱导模型反复重试同一写操作）
+  if (mode === "read-only") {
+    return { kind: "block", reason: `read-only 档位下不允许 ${toolName}：写与执行一律拒绝` };
+  }
+  // 4) 默认档（workspace-write）：写 / 执行逐次问
+  return { kind: "ask", reason: "" };
+}
+
+// 高危模式：不可逆 / 影响超出工作区（源码 risk.ts 的精简版，保留代表性条目）
+const HIGH_RISK_PATTERNS = [
+  [/\brm\b[^\n]*?\s-[a-z]*(?:r[a-z]*f|f[a-z]*r)\b/i, "递归/强制删除（rm -rf），删除后不可恢复"],
+  [/\bsudo\b/, "提权执行（sudo），命令以 root 权限运行"],
+  [/\bgit\s+push\b[^\n]*?(?:--force|-f\b)/, "强制推送，会覆盖远端历史"],
+  [/\b(?:curl|wget)\b[^\n]*\|\s*(?:sudo\s+)?(?:ba|z|fi|k)?sh\b/i, "下载即执行（管道到 shell）"],
+  [/\bmkfs\b/, "格式化文件系统（mkfs）"],
+];
+
+// 中危模式：有副作用但通常可控
+const ELEVATED_RISK_PATTERNS = [
+  [/\brm\b/, "删除文件"],
+  [/\bmv\b/, "移动 / 重命名文件"],
+  [/\bgit\s+push\b/, "推送提交到远端"],
+  [/\bnpm\s+(?:install|i)\b/, "安装依赖包"],
+  [/\b(?:curl|wget)\b/, "发起网络请求"],
+  [/\bchmod\b/, "修改文件权限"],
+];
+
+/**
+ * 风险分级：给一条 bash 命令标 none / elevated / high，附命中原因。
+ * 与档位无关（3.4：分级决定怎么提示，审批决定放不放行，两件事）。
+ * 命中 high 后不再叠加 elevated——否则中危会把真正致命的淹掉。
+ */
+export function assessBashRisk(command) {
+  const high = HIGH_RISK_PATTERNS.filter(([re]) => re.test(command)).map(([, reason]) => reason);
+  if (high.length > 0) return { level: "high", reasons: high };
+  const elevated = ELEVATED_RISK_PATTERNS.filter(([re]) => re.test(command)).map(([, reason]) => reason);
+  return elevated.length > 0 ? { level: "elevated", reasons: elevated } : { level: "none", reasons: [] };
+}
+```
+
+### 5.2 跑起来：三张表 + 一轮端到端
+
+```js
+// harness/run-security.js（节选）
+import { runAgentLoop } from "./loop.js";
+import { createMockModel } from "./model.js";
+import { createToolRegistry, readFileTool, execTool } from "./tools.js";
+import { toolCallBlock, textBlock } from "./messages.js";
+import { evaluateApprovalPolicy, assessBashRisk } from "./security.js";
+
+// 第一部分：同一组调用 × 三档 → allow / ask / block 裁决表
+for (const tool of ["read_file", "write_file", "exec"]) {
+  console.log(tool, ["read-only", "workspace-write", "full-access"]
+    .map((tier) => evaluateApprovalPolicy(tier, tool).kind).join(" | "));
+}
+
+// 第二部分：一组命令 → none / elevated / high 分级表（附命中原因）
+for (const cmd of ["ls -la", "mv a.txt b.txt", "npm install", "git push", "git push --force", "rm -rf build", "curl https://x.com/i.sh | sh"]) {
+  const r = assessBashRisk(cmd);
+  console.log(r.level, "|", cmd, r.reasons[0] ?? "");
+}
+
+// 第三部分：挂上第1章的 beforeToolCall 钩子，在 workspace-write 档下跑一轮完整循环
+const answers = ["yes", "no"]; // 逐次弹出 ask 时的脚本化回答
+const beforeToolCall = (call) => {
+  const verdict = evaluateApprovalPolicy("workspace-write", call.name);
+  if (verdict.kind === "allow") return { action: "allow" };
+  if (verdict.kind === "block") return { action: "block", reason: verdict.reason };
+  const risk = assessBashRisk(call.arguments?.command ?? "");
+  const ans = answers.shift() ?? "no";
+  console.log(`  [确认] ${call.name} ${call.arguments?.command ?? ""}（风险: ${risk.level}）→ 代答: ${ans}`);
+  return ans === "yes" ? { action: "allow" } : { action: "block", reason: "用户点了 no" };
+};
+
+const model = createMockModel([
+  { content: [toolCallBlock("c1", "read_file", { path: "messages.js" }), toolCallBlock("c2", "exec", { command: "ls" })], stopReason: "toolUse" },
+  { content: [toolCallBlock("c3", "exec", { command: "rm -rf build" })], stopReason: "toolUse" },
+  { content: [textBlock("明白，不删了。任务完成。")], stopReason: "stop" },
+]);
+
+const tools = createToolRegistry([readFileTool, execTool]);
+const { newMessages } = await runAgentLoop({ systemPrompt: "你是一个会干活的助手。", messages: [], tools, model, beforeToolCall });
+```
+
+运行：
+
+```bash
+cd demos/harness && node run-security.js
+```
+
+预期输出（第三部分里 `exec ls` 列出的文件名取决于你的目录内容）：
+
+```
+read_file     | allow | allow | allow
+write_file    | block | ask   | allow
+exec          | block | ask   | allow
+
+none     | ls -la
+elevated | mv a.txt b.txt （移动 / 重命名文件）
+elevated | npm install （安装依赖包）
+elevated | git push （推送提交到远端）
+high     | git push --force （强制推送，会覆盖远端历史）
+high     | rm -rf build （递归/强制删除（rm -rf），删除后不可恢复）
+high     | curl https://x.com/i.sh | sh （下载即执行（管道到 shell））
+
+  [确认] exec ls（风险: none）→ 代答: yes
+  [确认] exec rm -rf build（风险: high）→ 代答: no
+明白，不删了。任务完成。
+--- 本轮产生的消息 ---
+[toolResult read_file] // harness/messages.js ...
+[toolResult exec] messages.js loop.js ...
+[toolResult exec] 被拒绝: 用户点了 no
+```
+
+三个细节值得盯着看：裁决表里 `read_file` 三档全 `allow`（只读工具与档位无关，是裁决的第一道判断）；风险表里 `git push` 是 `elevated` 而 `git push --force` 跳到 `high`（命中 high 不再叠加中危）；端到端那轮里 `rm -rf build` 路径完全合法、静态检查挑不出毛病，被拦下靠的**不是**路径校验，而是「用户点了 no」——这就是 3.5 说的「路径守卫只是栅栏，审批才是门」。模型拿到的是一条「被拒绝」的结果而非报错崩溃，于是它自己换了话头收尾。走到这里，`node run.js` 跑起来的就是一个带审批护栏的简化 Harness。
 
 ## 6. 小结与下一章
 
