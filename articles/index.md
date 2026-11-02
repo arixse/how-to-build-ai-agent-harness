@@ -50,5 +50,8 @@ features:
 | [第 4 章 上下文与会话](/04-context-session/) | JSONL 落盘、容错加载、token 估算、自动压缩 |
 | [第 5 章 供应商抽象](/05-provider/) | 统一 Provider 接口、鉴权头 / Base URL / 窗口表 |
 | [第 6 章 安全模型](/06-security/) | 审批三档、风险分级、路径与凭据保护 |
+| [第 7 章 子 Agent 与 Skills](/07-advanced-subagent/) | 委派 = 一次工具调用、上下文隔离、成本三道闸、渐进式披露 |
+| [第 8 章 评测：给 Agent 上门禁](/08-evaluation/) | 任务集、三合一判定、相对基线、CI 门禁 |
+| [第 9 章 多形态交付](/09-delivery-forms/) | 同一内核 → 终端 / headless / SSE 服务端 |
 
-> 其余章节（上下文、供应商、子 Agent、评测、多形态交付）后续补齐。
+> 全系列 0~9 章已齐；`demos/harness/` 是贯穿全系列的累积式代码，按各章「实现」节跟着写即可搭出简化 Harness。

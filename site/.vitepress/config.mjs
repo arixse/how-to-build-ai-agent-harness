@@ -37,7 +37,10 @@ export default withMermaid(defineConfig({
       { text: '第 3 章 · 可靠性', link: '/03-reliable-model/' },
       { text: '第 4 章 · 上下文', link: '/04-context-session/' },
       { text: '第 5 章 · 供应商', link: '/05-provider/' },
-      { text: '第 6 章 · 安全', link: '/06-security/' }
+      { text: '第 6 章 · 安全', link: '/06-security/' },
+      { text: '第 7 章 · 子 Agent', link: '/07-advanced-subagent/' },
+      { text: '第 8 章 · 评测', link: '/08-evaluation/' },
+      { text: '第 9 章 · 交付', link: '/09-delivery-forms/' }
     ],
 
     sidebar: [
@@ -57,7 +60,10 @@ export default withMermaid(defineConfig({
           { text: '第 3 章 模型层可靠性', link: '/03-reliable-model/' },
           { text: '第 4 章 上下文与会话', link: '/04-context-session/' },
           { text: '第 5 章 供应商抽象', link: '/05-provider/' },
-          { text: '第 6 章 安全模型', link: '/06-security/' }
+          { text: '第 6 章 安全模型', link: '/06-security/' },
+          { text: '第 7 章 子 Agent 与 Skills', link: '/07-advanced-subagent/' },
+          { text: '第 8 章 评测：给 Agent 上门禁', link: '/08-evaluation/' },
+          { text: '第 9 章 多形态交付', link: '/09-delivery-forms/' }
         ]
       }
     ],
