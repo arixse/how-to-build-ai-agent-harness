@@ -35,6 +35,8 @@ export default withMermaid(defineConfig({
       { text: '第 1 章 · Loop', link: '/01-agent-loop/' },
       { text: '第 2 章 · 工具层', link: '/02-tool-layer/' },
       { text: '第 3 章 · 可靠性', link: '/03-reliable-model/' },
+      { text: '第 4 章 · 上下文', link: '/04-context-session/' },
+      { text: '第 5 章 · 供应商', link: '/05-provider/' },
       { text: '第 6 章 · 安全', link: '/06-security/' }
     ],
 
@@ -53,6 +55,8 @@ export default withMermaid(defineConfig({
           { text: '第 1 章 最小可用 Agent Loop', link: '/01-agent-loop/' },
           { text: '第 2 章 工具层设计', link: '/02-tool-layer/' },
           { text: '第 3 章 模型层可靠性', link: '/03-reliable-model/' },
+          { text: '第 4 章 上下文与会话', link: '/04-context-session/' },
+          { text: '第 5 章 供应商抽象', link: '/05-provider/' },
           { text: '第 6 章 安全模型', link: '/06-security/' }
         ]
       }
