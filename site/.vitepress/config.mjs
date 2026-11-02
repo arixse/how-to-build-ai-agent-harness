@@ -59,7 +59,7 @@ export default withMermaid(defineConfig({
         ]
       },
       {
-        text: '技术章节（样稿）',
+        text: '内核：一套简化 Harness（第 1~6 章）',
         collapsed: false,
         items: [
           { text: '第 1 章 最小可用 Agent Loop', link: '/01-agent-loop/' },
@@ -67,7 +67,13 @@ export default withMermaid(defineConfig({
           { text: '第 3 章 模型层可靠性', link: '/03-reliable-model/' },
           { text: '第 4 章 上下文与会话', link: '/04-context-session/' },
           { text: '第 5 章 供应商抽象', link: '/05-provider/' },
-          { text: '第 6 章 安全模型', link: '/06-security/' },
+          { text: '第 6 章 安全模型', link: '/06-security/' }
+        ]
+      },
+      {
+        text: '进阶与交付（第 7~9 章）',
+        collapsed: false,
+        items: [
           { text: '第 7 章 子 Agent 与 Skills', link: '/07-advanced-subagent/' },
           { text: '第 8 章 评测：给 Agent 上门禁', link: '/08-evaluation/' },
           { text: '第 9 章 多形态交付', link: '/09-delivery-forms/' }
@@ -75,7 +81,9 @@ export default withMermaid(defineConfig({
       }
     ],
 
-    docFooter: { prev: false, next: true },
+    // prev/next 都打开，且给中文标签：布尔值会被当成「标签文本」渲染成 "true"，
+    // 所以这里显式写字符串（VitePress 的 docFooter 只接受 string | false）。
+    docFooter: { prev: '上一篇', next: '下一篇' },
     lastUpdated: false,
     returnToTopLabel: '回到顶部',
     sidebarMenuLabel: '目录',
