@@ -13,11 +13,18 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..')
 // 联接指向 site/node_modules（见 package.json 的 postinstall 与 scripts/link-node_modules.mjs）。
 // 这里把仓库根加入 dev server 的 fs.allow，避免「文件在根外」被拦截。
 // 引入 mermaid 插件：文章里的 ```mermaid 流程图才能在站点里正常渲染
+// base：GitHub Pages 项目页部署在仓库子路径下
+// （https://arixse.github.io/how-to-build-ai-agent-harness/），
+// 必须以 /how-to-build-ai-agent-harness/ 为 base，否则 JS/CSS 全部 404。
+// 本地与自定义部署默认 '/'，CI 里通过环境变量 VITEPRESS_BASE 注入（见 .github/workflows/deploy-pages.yml）。
+const BASE = process.env.VITEPRESS_BASE || '/'
+
 // （否则会退化成原始代码块，和之前预览器不显示是同一个坑）。
 export default withMermaid(defineConfig({
   title: '从零搭建 AI Agent Harness',
   description: '一个手把手教你从 0 到 1 造 Agent 框架的系列技术博客',
   srcDir: '../articles',
+  base: BASE,
   cleanUrls: true,
   ignoreDeadLinks: false, // 由 scripts/check-links.mjs 统一把关死链，构建时不静默放过
 
